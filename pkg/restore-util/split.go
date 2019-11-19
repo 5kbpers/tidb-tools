@@ -55,9 +55,9 @@ func (rs *RegionSplitter) Split(
 	onSplit OnSplitFunc,
 ) error {
 	startTime := time.Now()
-	rangeTree, ok := newRangeTreeWithRewrite(ranges, rewriteRules)
-	if !ok {
-		return errors.Errorf("ranges overlapped: %v", ranges)
+	rangeTree, err := newRangeTreeWithRewrite(ranges, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	scatterRegions, err := rs.splitByRewriteRules(ctx, rewriteRules.Data)
 	if err != nil {
@@ -113,16 +113,16 @@ func (rs *RegionSplitter) splitByRewriteRules(ctx context.Context, rules []*impo
 	return scatterRegions, nil
 }
 
-func newRangeTreeWithRewrite(ranges []Range, rewriteRules *RewriteRules) (*RangeTree, bool) {
+func newRangeTreeWithRewrite(ranges []Range, rewriteRules *RewriteRules) (*RangeTree, error) {
 	rangeTree := NewRangeTree()
 	for _, rg := range ranges {
 		rg.StartKey = replacePrefix(rg.StartKey, rewriteRules)
 		rg.EndKey = replacePrefix(rg.EndKey, rewriteRules)
-		if !rangeTree.InsertRange(rg) {
-			return nil, false
+		if out := rangeTree.InsertRange(rg); out != nil {
+			return nil, errors.Errorf("ranges overlapped: %v, %v", out.(*Range), rg)
 		}
 	}
-	return rangeTree, true
+	return rangeTree, nil
 }
 
 func (rs *RegionSplitter) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
@@ -251,13 +251,14 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) []byte {
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]...)
+			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...)
 		}
 	}
 	for _, rule := range rewriteRules.Table {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]...)
+			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...)
 		}
 	}
+
 	return s
 }
