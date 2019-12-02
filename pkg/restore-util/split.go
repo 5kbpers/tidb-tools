@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
 )
@@ -126,8 +127,17 @@ func (rs *RegionSplitter) splitByRewriteRules(
 func newRangeTreeWithRewrite(ranges []Range, rewriteRules *RewriteRules) (*RangeTree, error) {
 	rangeTree := NewRangeTree()
 	for _, rg := range ranges {
-		rg.StartKey = replacePrefix(rg.StartKey, rewriteRules)
-		rg.EndKey = replacePrefix(rg.EndKey, rewriteRules)
+		var startRule, endRule *import_sstpb.RewriteRule
+		rg.StartKey, startRule = replacePrefix(rg.StartKey, rewriteRules)
+		rg.EndKey, endRule  = replacePrefix(rg.EndKey, rewriteRules)
+		// In this case, we should rewrite the end key with the "tableID+1" rule
+		if startRule != nil && endRule == nil {
+			endKeyNewPrefix := make([]byte, len(startRule.GetNewKeyPrefix()))
+			copy(endKeyNewPrefix, startRule.GetNewKeyPrefix())
+			tableID := tablecodec.DecodeTableID(rg.StartKey)
+			endKeyNewPrefix = tablecodec.ReplaceRecordKeyTableID(endKeyNewPrefix, tableID+1)
+			rg.EndKey = append(endKeyNewPrefix, rg.EndKey[len(endKeyNewPrefix):]...)
+		}
 		if out := rangeTree.InsertRange(rg); out != nil {
 			return nil, errors.Errorf("ranges overlapped: %v, %v", out.(*Range).String(), rg.String())
 		}
@@ -257,18 +267,18 @@ func beforeEnd(key []byte, end []byte) bool {
 	return bytes.Compare(key, end) < 0 || len(end) == 0
 }
 
-func replacePrefix(s []byte, rewriteRules *RewriteRules) []byte {
+func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.RewriteRule) {
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...)
+			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
 		}
 	}
 	for _, rule := range rewriteRules.Table {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...)
+			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
 		}
 	}
 
-	return s
+	return s, nil
 }
