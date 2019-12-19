@@ -225,7 +225,6 @@ func (c *pdClient) BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo
 		if regions[i].GetId() == regionInfo.Region.GetId() {
 			continue
 		}
-		log.Info("split new regions", zap.Stringer("region", regions[i]))
 		var leader *metapb.Peer
 		// Assume the leaders will be at the same store.
 		if regionInfo.Leader != nil {
@@ -236,11 +235,13 @@ func (c *pdClient) BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo
 				}
 			}
 		}
+		//log.Info("split new regions", zap.Stringer("region", regions[i]))
 		newRegionInfos = append(newRegionInfos, &RegionInfo{
 			Region: regions[i],
 			Leader: leader,
 		})
 	}
+	log.Info("batch split regions", zap.Int("regions", len(newRegionInfos)))
 	return newRegionInfos, nil
 }
 

@@ -108,11 +108,10 @@ SplitRegions:
 					interval = SplitMaxRetryInterval
 				}
 				time.Sleep(interval)
-				if i > 3 {
-					log.Warn("splitting regions failed, retry it", zap.Error(err))
-				}
+				log.Warn("splitting regions failed, retry it", zap.Error(err))
 				continue SplitRegions
 			}
+			log.Info("after batch split regions 2", zap.Int("regions", len(newRegions)))
 			scatterRegions = append(scatterRegions, newRegions...)
 			onSplit(keys)
 		}
@@ -121,6 +120,7 @@ SplitRegions:
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("after batch split regions 3", zap.Int("regions", len(scatterRegions)))
 	log.Info("splitting regions done, wait for scattering regions",
 		zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	startTime = time.Now()
@@ -206,6 +206,7 @@ func (rs *RegionSplitter) splitAndScatterRegions(ctx context.Context, regionInfo
 	if err != nil {
 		return nil, err
 	}
+	log.Info("after batch split regions", zap.Int("regions", len(newRegions)))
 	for _, region := range newRegions {
 		// Wait for a while until the regions successfully splits.
 		err = rs.waitForSplit(ctx, region.Region.Id)
