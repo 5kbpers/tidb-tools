@@ -82,10 +82,11 @@ func (rs *RegionSplitter) Split(
 		}
 	}
 	interval := SplitRetryInterval
-	var scatterRegions []*RegionInfo
+	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
 	for i := 0; i < SplitRetryTimes; i++ {
-		regions, err := rs.client.ScanRegions(ctx, minKey, maxKey, 0)
+		var regions []*RegionInfo
+		regions, err = rs.client.ScanRegions(ctx, minKey, maxKey, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -98,7 +99,6 @@ SplitRegions:
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
-		scatterRegions = make([]*RegionInfo, 0)
 		for regionID, keys := range splitKeyMap {
 			var newRegions []*RegionInfo
 			newRegions, err = rs.splitAndScatterRegions(ctx, regionMap[regionID], keys)
@@ -113,15 +113,19 @@ SplitRegions:
 				}
 				continue SplitRegions
 			}
-			onSplit(keys)
 			scatterRegions = append(scatterRegions, newRegions...)
+			onSplit(keys)
 		}
 		break
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 	log.Info("splitting regions done, wait for scattering regions",
 		zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	startTime = time.Now()
 	for _, region := range scatterRegions {
+		log.Info("wait for scattering region", zap.Stringer("region", region.Region))
 		rs.waitForScatterRegion(ctx, region)
 	}
 	log.Info("waiting for scattering regions done",
@@ -143,9 +147,13 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 		return false, err
 	}
 	// Heartbeat may not be sent to PD
-	if resp.GetHeader().GetError().GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
-		return true, nil
+	if respErr := resp.GetHeader().GetError(); respErr != nil {
+		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
+			return true, nil
+		}
+		return false, errors.Errorf("get operator error: %s", respErr.GetType())
 	}
+	log.Info("get operator", zap.Uint64("regionID", regionID), zap.Stringer("resp", resp))
 	// If the current operator of the region is not 'scatter-region', we could assume
 	// that 'scatter-operator' has finished or timeout
 	ok := string(resp.GetDesc()) != "scatter-region" || resp.GetStatus() != pdpb.OperatorStatus_RUNNING

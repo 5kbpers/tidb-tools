@@ -17,8 +17,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/log"
 	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/pd/server/schedule/placement"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -217,16 +219,17 @@ func (c *pdClient) BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo
 	}
 
 	regions := resp.GetRegions()
-	newRegionInfos := make([]*RegionInfo, 0, len(regions))
-	for _, region := range regions {
+	newRegionInfos := make([]*RegionInfo, 0)
+	for i := range regions {
 		// Skip the original region
-		if region.GetId() == regionInfo.Region.GetId() {
+		if regions[i].GetId() == regionInfo.Region.GetId() {
 			continue
 		}
+		log.Info("split new regions", zap.Stringer("region", regions[i]))
 		var leader *metapb.Peer
 		// Assume the leaders will be at the same store.
 		if regionInfo.Leader != nil {
-			for _, p := range region.GetPeers() {
+			for _, p := range regions[i].GetPeers() {
 				if p.GetStoreId() == regionInfo.Leader.GetStoreId() {
 					leader = p
 					break
@@ -234,7 +237,7 @@ func (c *pdClient) BatchSplitRegions(ctx context.Context, regionInfo *RegionInfo
 			}
 		}
 		newRegionInfos = append(newRegionInfos, &RegionInfo{
-			Region: region,
+			Region: regions[i],
 			Leader: leader,
 		})
 	}
